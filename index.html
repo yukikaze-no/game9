@@ -4,18 +4,8 @@
   <meta charset="UTF-8">
   <title>Rhythm Game PWA</title>
 
-  <!-- Mobile optimization -->
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-
-  <!-- PWA manifest -->
   <link rel="manifest" href="manifest.json">
-
-  <!-- iOS PWA support -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-
-  <!-- Icons -->
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 
   <style>
     body {
@@ -26,11 +16,7 @@
       text-align: center;
       overflow: hidden;
     }
-
-    #menu, #game, #result {
-      margin-top: 20px;
-    }
-
+    #menu, #game, #result { margin-top: 20px; }
     canvas {
       background: #111;
       display: block;
@@ -39,57 +25,21 @@
       max-width: 100vw;
       max-height: 90vh;
     }
-
     button {
       padding: 10px 18px;
       margin: 6px;
       font-size: 18px;
       border-radius: 8px;
     }
-
-    h2 { font-size: 26px; }
-    p  { font-size: 18px; }
   </style>
 </head>
-
-<!-- Firebase SDK -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-  import { getDatabase, ref, get, set, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyDyXesDOgGoa1ZO1uO3hegmooRFcDcXYkU",
-    authDomain: "game-count-c0cdc.firebaseapp.com",
-    databaseURL: "https://game-count-c0cdc-default-rtdb.asia-southeast1.firebasedatabase.app",
-    projectId: "game-count-c0cdc",
-    storageBucket: "game-count-c0cdc.firebasestorage.app",
-    messagingSenderId: "1004124857786",
-    appId: "1:1004124857786:web:654e3287d33fcec8fd6983"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const db = getDatabase(app);
-
-  window.db = db;
-  window.firebaseRef = ref;
-  window.firebaseGet = get;
-  window.firebaseSet = set;
-  window.firebaseOnValue = onValue;
-</script>
 
 <body>
 
 <!-- MENU -->
 <div id="menu">
   <h2>Select Song & Difficulty</h2>
-
-  <p style="font-size:14px; color:#ccc; margin-bottom:20px;">
-    This game is created for practice purposes.
-  </p>
-
-  <!-- 自動生成される曲リスト -->
   <div id="songList"></div>
-
   <p>PC: S / D / K / L | Mobile: Tap the lanes</p>
 </div>
 
@@ -108,21 +58,19 @@
   <p id="finalJudge"></p>
   <button onclick="returnToMenu()">Back to Menu</button>
 </div>
+
 <script>
 /* ------------------------------
-   DEVICE CHECK
+   CANVAS SETUP
 ------------------------------ */
 function isMobileDevice() {
   return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 }
 
-/* ------------------------------
-   CANVAS SETUP
------------------------------- */
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-canvas.width  = 400;
+canvas.width = 400;
 canvas.height = 600;
 
 if (isMobileDevice()) {
@@ -134,21 +82,17 @@ if (isMobileDevice()) {
 }
 
 /* ------------------------------
-   SONG LIST（list.json を読み込む）
+   SONG LIST (list.json)
 ------------------------------ */
 let songs = [];
 
 async function loadSongList() {
-  try {
-    const res = await fetch("notes/list.json");
-    songs = await res.json();
-  } catch (e) {
-    console.error("list.json の読み込みに失敗:", e);
-  }
+  const res = await fetch("notes/list.json");
+  songs = await res.json();
 }
 
 /* ------------------------------
-   MENU 自動生成
+   MENU GENERATION
 ------------------------------ */
 function buildSongMenu() {
   const list = document.getElementById("songList");
@@ -156,86 +100,78 @@ function buildSongMenu() {
 
   songs.forEach((song, index) => {
     const div = document.createElement("div");
-
     div.innerHTML = `
-      <button onclick="startGame(${index}, 'easy')">
-        ${song.title} (Easy)
-      </button>
-      <button onclick="startGame(${index}, 'hard')">
-        ${song.title} (Hard)
-      </button>
+      <button onclick="startGame(${index}, 'easy')">${song.title} (Easy)</button>
+      <button onclick="startGame(${index}, 'hard')">${song.title} (Hard)</button>
     `;
-
     list.appendChild(div);
   });
 }
 
 /* ------------------------------
-   PLAY COUNT（複数曲対応）
+   GAME VARIABLES
 ------------------------------ */
-async function incrementPlayCount(songIndex, difficulty) {
-  const key = `playcount/${songIndex}/${difficulty}`;
-  const countRef = firebaseRef(window.db, key);
+let notes = [];
+let startTime = 0;
+let score = 0, combo = 0, maxCombo = 0;
+let judgeCount = { Perfect: 0, Good: 0, Miss: 0 };
+let lastJudgment = "", lastJudgmentTimer = 0;
+let holdState = [null, null, null, null];
+let audio = null;
 
-  const snapshot = await firebaseGet(countRef);
-  let count = snapshot.exists() ? snapshot.val() : 0;
+const lanes = 4;
+const laneWidth = canvas.width / lanes;
+const hitY = 500;
+const travelTime = 2.0;
+const speed = (hitY + 50) / travelTime;
 
-  count++;
-  await firebaseSet(countRef, count);
-}
+const perfectWindow = 0.06;
+const goodWindow = 0.12;
+const missWindow = 0.18;
 
-function setupRealtimeCounts() {
-  const playcountRef = firebaseRef(window.db, "playcount");
+const keyToLane = { s: 0, d: 1, k: 2, l: 3 };
 
-  firebaseOnValue(playcountRef, (snapshot) => {
-    const data = snapshot.val() || {};
+document.addEventListener("keydown", e => {
+  const key = e.key.toLowerCase();
+  if (keyToLane[key] !== undefined) handleKeyDown(keyToLane[key]);
+});
+document.addEventListener("keyup", e => {
+  const key = e.key.toLowerCase();
+  if (keyToLane[key] !== undefined) handleKeyUp(keyToLane[key]);
+});
 
-    songs.forEach((song, index) => {
-      ["easy", "hard"].forEach(diff => {
-        const id = `count-${index}-${diff}`;
-        const value = data?.[index]?.[diff] ?? 0;
-
-        const span = document.getElementById(id);
-        if (span) span.textContent = value;
-      });
-    });
-  });
-}
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const x = e.touches[0].clientX - rect.left;
+  const lane = Math.floor(x / laneWidth);
+  handleKeyDown(lane);
+});
+canvas.addEventListener("touchend", e => {
+  e.preventDefault();
+  handleTouchEnd();
+});
 
 /* ------------------------------
-   ページ読み込み時の初期化
------------------------------- */
-window.onload = async function() {
-  await loadSongList();     // ← list.json を読み込む
-  buildSongMenu();          // ← メニュー自動生成
-  setupRealtimeCounts();    // ← Firebase カウント
-};
-</script>
-<script>
-/* ------------------------------
-   START GAME（JSON 譜面読み込み）
+   START GAME
 ------------------------------ */
 async function startGame(songIndex, difficulty) {
-  incrementPlayCount(songIndex, difficulty);
-
   document.getElementById("menu").style.display = "none";
   document.getElementById("result").style.display = "none";
   document.getElementById("game").style.display = "block";
 
   const song = songs[songIndex];
-  difficultyLabel = difficulty;
-
   document.getElementById("songTitle").innerText =
-    song.title + " [" + difficulty.toUpperCase() + "]";
+    `${song.title} [${difficulty.toUpperCase()}]`;
 
-  // JSON を読み込む
+  // Load chart
   const res = await fetch(song.json);
   const chart = await res.json();
 
   const bpm = chart.bpm;
   const pattern = chart.patterns[difficulty];
 
-  // beat → 秒変換してノーツ生成
+  // Generate notes
   notes = pattern.map(n => ({
     lane: n.lane,
     time: n.beat * 60 / bpm,
@@ -248,10 +184,15 @@ async function startGame(songIndex, difficulty) {
     active: false
   }));
 
+  // Reset game state
   score = 0;
   combo = 0;
   maxCombo = 0;
   judgeCount = { Perfect: 0, Good: 0, Miss: 0 };
+
+  // Play audio
+  audio = new Audio(song.audio);
+  audio.play();
 
   startTime = performance.now() / 1000;
   update();
@@ -275,7 +216,6 @@ function applyJudgment(note, result) {
   note.glow = 0.2;
 
   judgeCount[result]++;
-
   if (result === "Perfect") { score += 1000; combo++; }
   else if (result === "Good") { score += 500; combo++; }
   else combo = 0;
@@ -287,7 +227,7 @@ function applyJudgment(note, result) {
 }
 
 /* ------------------------------
-   KEY DOWN
+   INPUT HANDLING
 ------------------------------ */
 function handleKeyDown(lane) {
   const t = performance.now() / 1000 - startTime;
@@ -317,9 +257,6 @@ function handleKeyDown(lane) {
   }
 }
 
-/* ------------------------------
-   KEY UP（ロングノーツ）
------------------------------- */
 function handleKeyUp(lane) {
   const note = holdState[lane];
   if (!note) return;
@@ -331,9 +268,6 @@ function handleKeyUp(lane) {
   holdState[lane] = null;
 }
 
-/* ------------------------------
-   TOUCH END（スマホ用）
------------------------------- */
 function handleTouchEnd() {
   const t = performance.now() / 1000 - startTime;
   for (let lane = 0; lane < 4; lane++) {
@@ -344,10 +278,9 @@ function handleTouchEnd() {
     holdState[lane] = null;
   }
 }
-</script>
-<script>
+
 /* ------------------------------
-   END CHECK
+   MAIN LOOP
 ------------------------------ */
 function checkEnd(t) {
   let lastEnd = 0;
@@ -358,9 +291,6 @@ function checkEnd(t) {
   return t > lastEnd + 1.0;
 }
 
-/* ------------------------------
-   MAIN LOOP
------------------------------- */
 function update() {
   const now = performance.now() / 1000;
   const t = now - startTime;
@@ -370,9 +300,7 @@ function update() {
     return;
   }
 
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
   drawBackground(t);
 
   // Lanes
@@ -404,7 +332,7 @@ function update() {
       } else {
         const y2 = hitY - (n.endHitTime - t) * speed;
         const top = Math.min(y, y2);
-        const h   = Math.max(20, Math.abs(y - y2));
+        const h = Math.max(20, Math.abs(y - y2));
         ctx.fillRect(x, top, w, h);
       }
     }
@@ -473,6 +401,14 @@ function returnToMenu() {
   document.getElementById("result").style.display = "none";
   document.getElementById("menu").style.display = "block";
 }
+
+/* ------------------------------
+   INIT
+------------------------------ */
+window.onload = async function() {
+  await loadSongList();
+  buildSongMenu();
+};
 </script>
 
 </body>
