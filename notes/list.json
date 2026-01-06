@@ -1,1 +1,12 @@
-
+[
+  {
+    "title": "BornIn2026_1",
+    "json": "notes/BornIn2026_1.json",
+    "audio": "audio/BornIn2026_1.mp3"
+  },
+  {
+    "title": "BornIn2026_2",
+    "json": "notes/BornIn2026_2.json",
+    "audio": "audio/BornIn2026_2.mp3"
+  }
+]
